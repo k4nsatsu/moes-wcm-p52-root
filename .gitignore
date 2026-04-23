@@ -1,0 +1,35 @@
+# Firmware dumps — never commit these
+*.bin
+*.img
+*.zip
+memdump*
+
+# Compiled binaries — built locally by build script
+payload/unzip
+payload/dropbear
+payload/dropbearkeygen
+
+# Extracted firmware
+*_extracted/
+*.extracted/
+
+# TLS certificates and private keys — sensitive, device-unique
+*.pem
+*.crt
+*.key
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Editor
+.vscode/
+*.swp
