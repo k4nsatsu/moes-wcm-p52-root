@@ -59,8 +59,10 @@ Clip or desolder the XMC25QH64C and reflash `firmware_original_complete.bin` usi
 
 ## Status
 
-- [x] Root access achieved
+- [x] Root access achieved via SD card payload
 - [x] Full firmware backup completed
+- [ ] Network access via SSH (Dropbear static MIPS binary — planned)
+- [ ] Network access via Telnet (BusyBox telnetd — planned)
 - [ ] OpenIPC/Thingino build for this hardware
 - [ ] Verified flash procedure
 - [ ] Confirmed working after flash

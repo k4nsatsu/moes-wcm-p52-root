@@ -1,6 +1,6 @@
-# SD Card Payload — Root Access (No UART Required)
+# SD Card Payload — Root Access
 
-This is the primary method. No UART adapter needed — just an SD card and Docker.
+This is the primary method. A UART adapter is recommended to monitor execution, but the payload itself runs automatically on SD insertion.
 
 ---
 
@@ -9,6 +9,7 @@ This is the primary method. No UART adapter needed — just an SD card and Docke
 - SD card (any size)
 - Docker Desktop
 - macOS or Linux
+- USB-UART adapter (recommended, for monitoring)
 
 ---
 
@@ -28,6 +29,7 @@ diskutil list /dev/diskN
 ```
 
 Expected output:
+
 ```
 /dev/diskN (external, physical):
    #:  TYPE                NAME    SIZE
@@ -37,68 +39,50 @@ Expected output:
 
 ---
 
-## Step 2 — Build MIPS Binaries
+## Step 2 — Build and Prepare the SD Card
 
-The automount script calls `./unzip` from the SD root. Since the camera's BusyBox lacks this applet, a static MIPS binary must be compiled and placed on the SD.
-
-The build script handles everything:
+Run the build script — it compiles a static MIPS `unzip` binary, generates your password hash, and packs everything into the correct structure:
 
 ```bash
 ./payload/build-mips-binaries.sh /Volumes/TUYA
 ```
 
-This compiles and copies to the SD:
-- `unzip` — static MIPS binary for extracting the payload
-- `dropbear` — lightweight SSH server
-- `dropbearkeygen` — SSH key generator
+The script will ask for a root password and handle everything else.
 
----
+Alternatively, do it manually:
 
-## Step 3 — Generate a Root Password Hash
+### Manual setup
 
 ```bash
+# Generate root password hash
 openssl passwd -1 -salt Ab12Cd34 yourpassword
-# Output: $1$Ab12Cd34$xxxxxxxxxxxxxxxxxxxx
-```
+# Output example: $1$Ab12Cd34$H4AITkzmvn77bWgKa4M.k/
 
----
+# Download and compile unzip for MIPS
+curl -L 'https://sourceforge.net/projects/infozip/files/UnZip%206.x%20%28latest%29/UnZip%206.0/unzip60.tar.gz/download' \
+  -o /tmp/unzip60.tar.gz
 
-## Step 4 — Create the Payload
+docker run --rm --platform linux/amd64 \
+  -v /Volumes/TUYA:/out \
+  -v /tmp/unzip60.tar.gz:/unzip60.tar.gz \
+  debian:bullseye sh -c "
+    apt-get update -qq &&
+    apt-get install -y -qq gcc-mipsel-linux-gnu make &&
+    tar xzf /unzip60.tar.gz &&
+    cd unzip60 &&
+    make -f unix/Makefile CC='mipsel-linux-gnu-gcc -static' generic &&
+    cp unzip /out/unzip
+  "
 
-```bash
-# Create the directory structure
+# Create payload structure
 mkdir -p /tmp/t31payload/tuya/fac/script
 
-# Create the payload script
-cat > /tmp/t31payload/tuya/fac/script/ty_auto_test.sh << 'EOF'
+cat > /tmp/t31payload/tuya/fac/script/ty_auto_test.sh << 'PAYLOAD'
 #!/bin/sh
 echo "*****[payload]***** started" > /dev/console
-
-SDCARD=/mnt/mmcblk0p1
-
-# --- Telnet (busybox, no password) ---
-/bin/busybox telnetd -l /bin/sh -p 23 > /dev/null 2>&1 &
-
-# --- SSH (dropbear) ---
-cp $SDCARD/dropbear /tmp/dropbear
-cp $SDCARD/dropbearkeygen /tmp/dropbearkeygen
-chmod +x /tmp/dropbear /tmp/dropbearkeygen
-
-mkdir -p /tmp/dropbear_keys
-/tmp/dropbearkeygen -t rsa -f /tmp/dropbear_keys/dropbear_rsa_host_key
-/tmp/dropbearkeygen -t ecdsa -f /tmp/dropbear_keys/dropbear_ecdsa_host_key
-
-/tmp/dropbear \
-  -r /tmp/dropbear_keys/dropbear_rsa_host_key \
-  -r /tmp/dropbear_keys/dropbear_ecdsa_host_key \
-  -p 22 &
-
-# --- Change root password ---
-# Replace the hash below with your own (generated with: openssl passwd -1 -salt Ab12Cd34 yourpassword)
 echo 'root:YOUR_HASH_HERE:10933:0:99999:7:::' > /etc/shadow
-
 echo "*****[payload]***** done" > /dev/console
-EOF
+PAYLOAD
 
 chmod +x /tmp/t31payload/tuya/fac/script/ty_auto_test.sh
 
@@ -106,72 +90,68 @@ chmod +x /tmp/t31payload/tuya/fac/script/ty_auto_test.sh
 cd /tmp/t31payload
 zip -r /Volumes/TUYA/t31.zip tuya/
 
-# Verify zip contents
+# Verify
 unzip -l /Volumes/TUYA/t31.zip
-```
-
-Expected zip contents:
-```
-tuya/fac/script/ty_auto_test.sh
 ```
 
 ---
 
-## Step 5 — Verify SD Card Contents
+## Step 3 — Verify SD Card Contents
 
 ```bash
 ls -lh /Volumes/TUYA/
 ```
 
 Expected:
+
 ```
-unzip             ← static MIPS binary
-dropbear          ← SSH server
-dropbearkeygen    ← SSH key generator
-t31.zip           ← payload zip
+unzip      ← static MIPS binary
+t31.zip    ← payload zip
 ```
 
 ---
 
-## Step 6 — Execute
+## Step 4 — Execute
 
 1. Eject the SD card safely:
+
    ```bash
    diskutil eject /dev/diskN
    ```
 
-2. Power on the camera and **wait for it to fully boot** (~15 seconds)
+2. Power on the camera and wait for it to fully boot (~15 seconds)
 
 3. Insert the SD card
 
-4. Wait ~30 seconds for the payload to execute
+4. Watch the UART log for confirmation:
 
-5. Connect:
-   ```bash
-   # SSH (recommended)
-   ssh root@<CAMERA_IP>
+   ```
+   ~~~~~~~~~~~~~~~~~~~ start to auto test...
+   *****[payload]***** started
+   *****[payload]***** done
+   ```
 
-   # Telnet (no password required)
-   telnet <CAMERA_IP> 23
+5. Press **Enter** at the `Tuya login:` prompt on UART:
+   ```
+   login: root
+   password: yourpassword
    ```
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| SSH/Telnet connection refused | Payload didn't run | Check SD format (must be FAT32 MBR) |
-| `[EXFAT] trying to mount... Fail` | Wrong SD format | Reformat as FAT32 MBR |
-| `no factory dir` in UART log | `unzip` failed | Ensure `unzip` is a valid static MIPS binary |
-| `no auto test script` in UART log | Wrong zip structure | Verify zip contains `tuya/fac/script/ty_auto_test.sh` |
-| SSH host key warning | New keys generated each boot | Use `ssh -o StrictHostKeyChecking=no root@<IP>` |
+| Symptom                            | Cause                   | Fix                                                           |
+| ---------------------------------- | ----------------------- | ------------------------------------------------------------- |
+| `[EXFAT] trying to mount... Fail`  | Wrong SD format         | Reformat as FAT32 MBR                                         |
+| `no factory dir` in UART log       | `unzip` failed silently | Ensure `unzip` is a valid static MIPS binary in SD root       |
+| `no auto test script` in UART log  | Wrong zip structure     | Verify zip contains `tuya/fac/script/ty_auto_test.sh` exactly |
+| Login still rejected after payload | Hash format issue       | Regenerate hash with `openssl passwd -1`                      |
 
 ---
 
 ## Notes
 
-- The payload runs **every time** the SD card is inserted while the camera is on
-- SSH and Telnet services run **in RAM only** — they stop when the camera reboots
-- To make changes permanent, modify the filesystem directly after gaining access
-- The `data` partition is writable — a good place to add persistent startup scripts
+- The payload runs every time the SD card is inserted while the camera is on
+- Changes to `/etc/shadow` persist across reboots as the `data` partition is writable
+- UART access is the confirmed working method — network access (SSH/Telnet) is planned but not yet tested
